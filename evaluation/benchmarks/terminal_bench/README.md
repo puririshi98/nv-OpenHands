@@ -5,6 +5,19 @@ implemented [OpenHands agent](https://github.com/laude-institute/terminal-bench/
 inside terminal-bench framework. Hereby we introduce how to use the terminal-bench
 harness to evaluate OpenHands.
 
+## Terminus Integration
+
+OpenHands now includes **Terminus**, an interactive terminal session manager designed
+specifically for terminal-intensive tasks like those in TerminalBench. Terminus provides:
+
+- **Persistent Sessions**: Environment variables and working directory persist across commands
+- **Interactive Process Support**: Handle REPLs, debuggers, and interactive CLIs
+- **Multi-Session Management**: Run multiple isolated terminal sessions concurrently
+- **Control Sequences**: Send Ctrl+C, Ctrl+D, and other control sequences
+
+See the [Terminus documentation](../../../openhands/agenthub/terminus_agent/README.md) for
+detailed usage information.
+
 ## Installation
 
 Terminal-bench ships a CLI tool to manage tasks and run evaluation.

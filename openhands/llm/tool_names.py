@@ -23,3 +23,9 @@ CODEX_LIST_DIR_TOOL_NAME = "list_dir"
 CODEX_GREP_FILES_TOOL_NAME = "grep_files"
 CODEX_APPLY_PATCH_TOOL_NAME = "apply_patch"
 CODEX_UPDATE_PLAN_TOOL_NAME = "update_plan"
+
+# Terminus-inspired tools for interactive terminal
+TERMINUS_START_TOOL_NAME = "terminus_start"
+TERMINUS_EXECUTE_TOOL_NAME = "terminus_execute"
+TERMINUS_INPUT_TOOL_NAME = "terminus_input"
+TERMINUS_STOP_TOOL_NAME = "terminus_stop"

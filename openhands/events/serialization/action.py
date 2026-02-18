@@ -45,6 +45,12 @@ from openhands.events.action.codex import (
     CodexReadFileAction,
     CodexUpdatePlanAction,
 )
+from openhands.events.action.terminus import (
+    TerminusExecuteAction,
+    TerminusInputAction,
+    TerminusStartAction,
+    TerminusStopAction,
+)
 
 actions = (
     NullAction,
@@ -84,6 +90,11 @@ actions = (
     CodexGrepFilesAction,
     CodexApplyPatchAction,
     CodexUpdatePlanAction,
+    # Terminus-style actions
+    TerminusStartAction,
+    TerminusExecuteAction,
+    TerminusInputAction,
+    TerminusStopAction,
 )
 
 ACTION_TYPE_TO_CLASS = {action_class.action: action_class for action_class in actions}  # type: ignore[attr-defined]

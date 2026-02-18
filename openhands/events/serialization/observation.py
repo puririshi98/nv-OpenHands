@@ -39,6 +39,11 @@ from openhands.events.observation.codex import (
     CodexApplyPatchObservation,
     CodexUpdatePlanObservation,
 )
+from openhands.events.observation.terminus import (
+    TerminusErrorObservation,
+    TerminusOutputObservation,
+    TerminusSessionObservation,
+)
 from openhands.events.observation.reject import UserRejectObservation
 from openhands.events.observation.success import SuccessObservation
 from openhands.events.observation.task_tracking import TaskTrackingObservation
@@ -70,6 +75,10 @@ observations = (
     # Codex-style observations
     CodexApplyPatchObservation,
     CodexUpdatePlanObservation,
+    # Terminus-style observations
+    TerminusOutputObservation,
+    TerminusErrorObservation,
+    TerminusSessionObservation,
 )
 
 OBSERVATION_TYPE_TO_CLASS = {

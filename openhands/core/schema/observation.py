@@ -99,3 +99,13 @@ class ObservationType(str, Enum):
 
     CODEX_UPDATE_PLAN = 'codex_update_plan'
     """Result of updating the task plan."""
+
+    # Terminus-style observations for interactive terminal
+    TERMINUS_OUTPUT = 'terminus_output'
+    """Result of terminal command execution or output from running process."""
+
+    TERMINUS_ERROR = 'terminus_error'
+    """Error from terminal session operation."""
+
+    TERMINUS_SESSION = 'terminus_session'
+    """Status information about a terminal session."""

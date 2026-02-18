@@ -147,3 +147,16 @@ class ActionType(str, Enum):
 
     CODEX_UPDATE_PLAN = 'codex_update_plan'
     """Updates the task plan with steps and statuses."""
+
+    # Terminus-style actions for interactive terminal
+    TERMINUS_START = 'terminus_start'
+    """Starts a persistent interactive terminal session."""
+
+    TERMINUS_EXECUTE = 'terminus_execute'
+    """Executes a command in an existing terminal session."""
+
+    TERMINUS_INPUT = 'terminus_input'
+    """Sends input to a running process in the terminal session."""
+
+    TERMINUS_STOP = 'terminus_stop'
+    """Stops and cleans up a terminal session."""
