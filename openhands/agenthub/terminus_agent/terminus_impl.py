@@ -18,6 +18,9 @@ from typing import Any
 
 from openhands.core.logger import openhands_logger as logger
 
+# Unique prompt marker to reliably detect command completion
+PROMPT_MARKER = "<<<TERMINUS_PROMPT_READY>>>"
+
 
 @dataclass
 class TerminalSession:
@@ -92,6 +95,10 @@ class TerminusSessionManager:
         Raises:
             RuntimeError: If session creation fails
         """
+        # FIX #3: Initialize variables before try block to avoid NameError
+        master_fd = None
+        process = None
+
         async with self._lock:
             if session_id is None:
                 session_id = self._generate_session_id()
@@ -111,6 +118,10 @@ class TerminusSessionManager:
             try:
                 # Create PTY for interactive session
                 master_fd, slave_fd = pty.openpty()
+
+                # FIX #4: Set custom PS1 with unique marker for reliable prompt detection
+                session_env['PS1'] = f'\\w {PROMPT_MARKER} $ '
+                session_env['PS2'] = '> '  # Secondary prompt
 
                 # Start the shell process
                 process = subprocess.Popen(
@@ -147,9 +158,26 @@ class TerminusSessionManager:
                 await asyncio.sleep(0.1)
                 self._read_available_output(session)
 
+                # Explicitly set PS1 with our marker by sending it as a command
+                # This ensures it takes effect regardless of bashrc settings
+                ps1_cmd = f"PS1='\\w {PROMPT_MARKER} $ '\n"
+                os.write(session.master_fd, ps1_cmd.encode())
+                await asyncio.sleep(0.2)
+                self._read_available_output(session)
+
+                # Clear all initial output
+                session.output_buffer = ""
+
                 return session_id, f"Session {session_id} started successfully"
 
             except Exception as e:
+                # FIX #8: Complete resource cleanup on error
+                if process is not None:
+                    try:
+                        process.kill()
+                        process.wait(timeout=1)
+                    except Exception:
+                        pass
                 if master_fd is not None:
                     try:
                         os.close(master_fd)
@@ -178,56 +206,78 @@ class TerminusSessionManager:
         Raises:
             RuntimeError: If session not found or execution fails
         """
-        session = self.sessions.get(session_id)
-        if not session:
-            raise RuntimeError(f"Session {session_id} not found")
+        # FIX #2: Add locking to prevent race conditions
+        async with self._lock:
+            session = self.sessions.get(session_id)
+            if not session:
+                raise RuntimeError(f"Session {session_id} not found")
 
-        if session.process is None or session.master_fd is None:
-            raise RuntimeError(f"Session {session_id} is not active")
+            if session.process is None or session.master_fd is None:
+                raise RuntimeError(f"Session {session_id} is not active")
 
-        try:
-            # Clear buffers
-            session.output_buffer = ""
-            session.error_buffer = ""
+            # FIX #5: Check if process is still alive
+            if session.process.poll() is not None:
+                raise RuntimeError(f"Session {session_id} process has terminated")
 
-            # Send command
-            command_with_newline = command + "\n"
-            os.write(session.master_fd, command_with_newline.encode())
-
-            # Wait for command to complete
-            start_time = time.time()
-            timeout_reached = False
-
-            while time.time() - start_time < timeout:
-                await asyncio.sleep(0.1)
+            try:
+                # FIX #6: Read and discard any stale output before clearing buffers
                 self._read_available_output(session)
 
-                # Check if command completed by looking for prompt
-                # This is a simple heuristic - could be improved
-                if self._command_completed(session.output_buffer):
-                    break
-            else:
-                timeout_reached = True
+                # Now clear buffers for the new command
+                session.output_buffer = ""
+                session.error_buffer = ""
 
-            # Update last activity
-            session.last_activity = time.time()
+                # Send command
+                command_with_newline = command + "\n"
+                os.write(session.master_fd, command_with_newline.encode())
 
-            # Parse output and exit code
-            stdout = session.output_buffer
-            stderr = session.error_buffer
-            exit_code = self._extract_exit_code(session) if not timeout_reached else None
+                # Wait for command to complete
+                start_time = time.time()
+                timeout_reached = False
 
-            logger.debug(
-                f"Executed command in session {session_id}: {command[:50]}... "
-                f"(exit_code={exit_code}, timeout={timeout_reached})"
-            )
+                while time.time() - start_time < timeout:
+                    await asyncio.sleep(0.1)
+                    self._read_available_output(session)
 
-            return stdout, stderr, exit_code, timeout_reached
+                    # Check if command completed by looking for prompt marker
+                    if self._command_completed(session.output_buffer):
+                        break
+                else:
+                    timeout_reached = True
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to execute command in session {session_id}: {str(e)}"
-            ) from e
+                # Update last activity
+                session.last_activity = time.time()
+
+                # FIX #1: Extract exit code without contaminating the output buffer
+                stdout = session.output_buffer
+                stderr = session.error_buffer
+                exit_code = None
+
+                if not timeout_reached:
+                    # Store current buffer
+                    saved_buffer = session.output_buffer
+
+                    # Clear buffer and get exit code
+                    session.output_buffer = ""
+                    exit_code = await self._extract_exit_code_async(session)
+
+                    # Restore original buffer for return value
+                    stdout = saved_buffer
+
+                # Clean up the output - remove prompt marker and extra formatting
+                stdout = self._clean_output(stdout)
+
+                logger.debug(
+                    f"Executed command in session {session_id}: {command[:50]}... "
+                    f"(exit_code={exit_code}, timeout={timeout_reached})"
+                )
+
+                return stdout, stderr, exit_code, timeout_reached
+
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to execute command in session {session_id}: {str(e)}"
+                ) from e
 
     async def send_input(
         self, session_id: str, input_text: str = "", is_control: bool = False
@@ -252,7 +302,14 @@ class TerminusSessionManager:
         if session.process is None or session.master_fd is None:
             raise RuntimeError(f"Session {session_id} is not active")
 
+        # FIX #5: Check if process is still alive
+        if session.process.poll() is not None:
+            raise RuntimeError(f"Session {session_id} process has terminated")
+
         try:
+            # FIX #6: Read and discard any stale output before clearing
+            self._read_available_output(session)
+
             # Clear buffers
             session.output_buffer = ""
             session.error_buffer = ""
@@ -419,32 +476,45 @@ class TerminusSessionManager:
             logger.debug(f"Error reading from session: {e}")
 
     def _command_completed(self, output: str) -> bool:
-        """Heuristic to detect if command has completed.
+        """Detect if command has completed using our custom prompt marker.
 
-        This looks for common shell prompts. Could be improved with more
-        sophisticated detection.
+        FIX #4: Use custom prompt marker instead of brittle regex patterns.
         """
-        # Look for common prompt patterns
-        lines = output.split("\n")
-        if not lines:
-            return False
+        # Look for our unique prompt marker
+        return PROMPT_MARKER in output
 
-        last_line = lines[-1]
+    def _clean_output(self, output: str) -> str:
+        """Clean up output by removing prompt markers and extra formatting.
 
-        # Common prompt indicators
-        prompt_patterns = [
-            r"[$#>]$",  # Ends with $, #, or >
-            r"[$#>]\s+$",  # Ends with $, #, or > followed by whitespace
-        ]
+        FIX #4: Clean the output to remove our custom markers.
+        """
+        if not output:
+            return output
 
-        for pattern in prompt_patterns:
-            if re.search(pattern, last_line):
-                return True
+        lines = output.split('\n')
+        cleaned_lines = []
 
-        return False
+        for line in lines:
+            # Skip lines that only contain the prompt marker
+            if PROMPT_MARKER in line:
+                # Remove the marker but keep other content on the line
+                line = line.replace(PROMPT_MARKER, '').strip()
+                if line and line not in ['$', '#', '>']:
+                    cleaned_lines.append(line)
+            else:
+                cleaned_lines.append(line)
 
-    def _extract_exit_code(self, session: TerminalSession) -> int:
-        """Extract exit code from last command.
+        result = '\n'.join(cleaned_lines)
+
+        # Remove leading/trailing whitespace but preserve internal structure
+        result = result.strip()
+
+        return result
+
+    async def _extract_exit_code_async(self, session: TerminalSession) -> int:
+        """Extract exit code from last command without contaminating output.
+
+        FIX #1 & #9: Async version that doesn't contaminate output buffer.
 
         Returns 0 if exit code cannot be determined.
         """
@@ -452,13 +522,33 @@ class TerminusSessionManager:
             # Send command to get last exit code
             if session.master_fd:
                 os.write(session.master_fd, b"echo $?\n")
-                time.sleep(0.1)
-                self._read_available_output(session)
+
+                # FIX #9: Use async sleep instead of blocking sleep
+                # Wait for the command to complete
+                start_time = time.time()
+                while time.time() - start_time < 2.0:
+                    await asyncio.sleep(0.05)
+                    self._read_available_output(session)
+
+                    # Check if we got the prompt marker (command completed)
+                    if PROMPT_MARKER in session.output_buffer:
+                        break
 
                 # Parse exit code from output
+                # The output will look like: "echo $?\r\n1\r\n<prompt_marker>"
                 lines = session.output_buffer.split("\n")
-                for line in reversed(lines):
-                    line = line.strip()
+                for i, line in enumerate(lines):
+                    # Remove ANSI escape codes (including CSI sequences with ?)
+                    # Pattern matches: ESC [ (optional ?) (digits/semicolons) (letter)
+                    line = re.sub(r'\x1b\[\??[0-9;]*[a-zA-Z]', '', line)
+                    line = re.sub(r'\x1b\][^\x07]*\x07', '', line)  # Also remove OSC sequences
+                    line = line.replace('\r', '').strip()
+
+                    # Skip empty lines and the echo command itself
+                    if not line or line == 'echo $?' or PROMPT_MARKER in line:
+                        continue
+
+                    # First non-empty line after the command should be the exit code
                     if line.isdigit():
                         return int(line)
 
@@ -517,12 +607,26 @@ class TerminusSessionManager:
         raise ValueError(f"Invalid control sequence: {control}")
 
 
-# Global session manager instance
+# FIX #7: Thread-safe singleton pattern
 _session_manager: TerminusSessionManager | None = None
+_manager_lock = asyncio.Lock()
+
+
+async def get_session_manager_async() -> TerminusSessionManager:
+    """Get or create the global session manager instance (thread-safe async version)."""
+    global _session_manager
+
+    async with _manager_lock:
+        if _session_manager is None:
+            _session_manager = TerminusSessionManager()
+        return _session_manager
 
 
 def get_session_manager() -> TerminusSessionManager:
-    """Get or create the global session manager instance."""
+    """Get or create the global session manager instance (legacy sync version).
+
+    Note: This is not fully thread-safe. Use get_session_manager_async() for async contexts.
+    """
     global _session_manager
     if _session_manager is None:
         _session_manager = TerminusSessionManager()
